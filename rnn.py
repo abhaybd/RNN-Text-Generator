@@ -2,8 +2,11 @@
 
 # Import libraries
 import numpy as np
-from keras.utils import np_utils
 from sklearn.externals import joblib
+from sklearn.preprocessing import OneHotEncoder
+from keras import backend as K
+
+K.set_learning_phase(1)
 
 # Get raw data and make lowercase
 raw_text = open('wonderland.txt').read()
@@ -14,67 +17,112 @@ chars = sorted(list(set(raw_text)))
 char_mapping = dict((c,i) for i, c in enumerate(chars))
 joblib.dump(char_mapping, 'char_mapping.sav')
 
+# Create One Hot Encoder, and fit on char mapping
+ohe = OneHotEncoder(categorical_features=[0])
+ohe.fit(np.reshape([char_mapping[char] for char in chars], (len(chars), 1)))
+
+# Encode raw_text into One-Hot-Encoding
+encoded_text = [char_mapping[char] for char in raw_text]
+encoded_text = np.reshape(encoded_text, (len(raw_text), 1))
+encoded_text = ohe.transform(encoded_text).toarray()
+
 # Get number of unique characters, and number of total characters
 n_chars = len(raw_text)
 n_vocab = len(chars)
 
 # Create sequences of 100 and their corresponding output
+seq_length = 100
 x_train = []
 y_train = []
-seq_length = 100
-for i in range(n_chars-seq_length):
-    x_train.append([char_mapping[char] for char in raw_text[i:i+seq_length]])
-    y_train.append(char_mapping[raw_text[i+seq_length]])
-joblib.dump(x_train, 'x_train.sav')
+for i in range(n_chars - seq_length):
+    sequence = encoded_text[i:i+seq_length,:-1]
+    x_train.append(sequence)
+    y_train.append(encoded_text[i+seq_length])
 
-# Reshape data and normalize
-x = np.reshape(x_train, (len(x_train), seq_length, 1))
-x = x/float(n_vocab)
-
-# One-Hot-Encode y data
-y = np_utils.to_categorical(y_train)
+# Create np arrays
+x_train = np.array(x_train)
+y_train = np.array(y_train)
 
 # Assemble RNN
 from keras.models import Sequential
 from keras.layers import LSTM, Dropout, Dense
 model = Sequential()
-model.add(LSTM(units=256, return_sequences=True, input_shape=(seq_length, 1)))
+model.add(LSTM(units=256, return_sequences=True, input_shape=(seq_length, n_vocab-1)))
+model.add(Dropout(0.2))
+model.add(LSTM(units=256, return_sequences=True))
 model.add(Dropout(0.2))
 model.add(LSTM(units=256))
 model.add(Dropout(0.2))
 model.add(Dense(n_vocab, activation='softmax'))
-model.compile(loss='categorical_crossentropy', optimizer='adam')
+model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
 
 # Fit and save RNN
-model.fit(x, y, epochs=50, batch_size=64)
+model.fit(x_train, y_train, epochs=50, batch_size=64)
 model.save('model.h5')
 
-# Load char mapping and model from disk
+# Import libraries
 from keras.models import load_model
 from sklearn.externals import joblib
+import numpy as np
+from keras import backend as K
+
+# Set learning phase (disable dropout)
+K.set_learning_phase(0)
+
+# Load model, char mapping, encoder, and raw text from disk
 model = load_model('model.h5')
 char_mapping = joblib.load('char_mapping.sav')
-x_train = joblib.load('x_train.sav')
+ohe = joblib.load('ohe.sav')
+raw_text = open('wonderland.txt').read().lower()
+n_vocab = len(char_mapping)
 
 # Create an inverse map of char mapping
 reverse_mapping = {}
 for x in char_mapping:
     reverse_mapping[char_mapping[x]] = x
 
-# Select a random seed
-import numpy as np
-start = np.random.randint(0, len(x_train)-1)
-seed = x_train[start]
-print('Seed: ')
-print(''.join([reverse_mapping[x] for x in seed]))
-print('-----------------------------')
-print(''.join([reverse_mapping[x] for x in seed]), end='')
+def select(output):
+    # Probabilistically determine output based on softmax output
+    from random import uniform
+    letter = uniform(0., 1.)
+    added = 0
+    for i in range(len(output)):
+        if added + output[i] >= letter:
+            return i
+        else:
+            added += output[i]
+            
+def generate_text(seed, steps):
+    seed = seed.lower()
+    print(seed, end='')
+    last = list(seed)
+    for i in range(steps):
+        # Get input sequence and encode it
+        input_seq = [char_mapping[char] for char in last]
+        input_seq = np.reshape(input_seq, (len(input_seq), 1))
+        input_seq = ohe.transform(input_seq).toarray()[:,:-1]
+        input_seq = np.expand_dims(input_seq, axis=0)
+        
+        # Predict output character and add to input sequence
+        y = model.predict(input_seq).flatten()
+        y = select(y)
+        del last[0]
+        last.append(reverse_mapping[y])
+        print(reverse_mapping[y], end='')
 
-last = seed
-for i in range(1000):
-    x = np.reshape(last, (1, len(last), 1))
-    x = x/float(len(char_mapping))
-    y = np.argmax(model.predict(x).flatten())
-    del last[0]
-    last.append(y)
-    print(reverse_mapping[y], end='')
+# Select a random 100-character seed
+import numpy as np
+start = np.random.randint(0, len(raw_text)-100)
+seed = raw_text[start:start+100]
+print('Seed: ')
+print(seed)
+print('-----------------------------')
+            
+# Predict 1000 characters
+generate_text(seed, 1000)
+
+def pad(text, length):
+    if len(text) > length:
+        return text
+    n_padding = length-len(text)-1
+    return '{}\n{}'.format(''.join([' ']*n_padding), text)
