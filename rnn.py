@@ -1,4 +1,4 @@
-# Generating text from Alice in Wonderland
+# Generating text with RNN
 
 # Import libraries
 import numpy as np
@@ -49,17 +49,21 @@ y_train = np.array(y_train)
 from keras.models import Sequential
 from keras.layers import LSTM, Dropout, Dense
 model = Sequential()
-model.add(LSTM(units=256, return_sequences=True, input_shape=(seq_length, n_vocab-1)))
+model.add(LSTM(units=300, return_sequences=True, input_shape=(seq_length, n_vocab-1)))
 model.add(Dropout(0.2))
-model.add(LSTM(units=256, return_sequences=True))
-model.add(Dropout(0.2))
-model.add(LSTM(units=256))
+model.add(LSTM(units=300))
 model.add(Dropout(0.2))
 model.add(Dense(n_vocab, activation='softmax'))
 model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
 
+# Create checkpoints
+from keras.callbacks import ModelCheckpoint
+filepath = 'shakespeare/weights-improvement-{epoch:02d}-{loss:.4f}.h5'
+checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, save_best_only=True, mode='min')
+callbacks_list = [checkpoint]
+
 # Fit and save RNN
-model.fit(x_train, y_train, epochs=50, batch_size=64)
+model.fit(x_train, y_train, epochs=70, batch_size=64, callbacks=callbacks_list)
 model.save('shakespeare/model.h5')
 
 # Import libraries
@@ -72,7 +76,7 @@ from keras import backend as K
 K.set_learning_phase(0)
 
 # Load model, char mapping, encoder, and raw text from disk
-model = load_model('shakespeare/model_1-2.h5')
+model = load_model('shakespeare/model.h5')
 char_mapping = joblib.load('shakespeare/char_mapping.sav')
 ohe = joblib.load('shakespeare/ohe.sav')
 raw_text = open('shakespeare.txt').read().lower()
@@ -107,7 +111,8 @@ def generate_text(seed, steps):
         
         # Predict output character and add to input sequence
         y = model.predict(input_seq).flatten()
-        y = select(y)
+        # y = select(y)
+        y = np.argmax(y)
         del last[0]
         last.append(reverse_mapping[y])
         print(reverse_mapping[y], end='')
