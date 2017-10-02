@@ -8,14 +8,16 @@ from keras import backend as K
 
 K.set_learning_phase(1)
 
+folder = 'shaks/'
+
 # Get raw data and make lowercase
-raw_text = open('shakespeare.txt').read()
+raw_text = open('shaks12.txt').read()
 raw_text = raw_text.lower()
 
 # Assemble a dict of all unique characters to a corresponding number
 chars = sorted(list(set(raw_text)))
 char_mapping = dict((c,i) for i, c in enumerate(chars))
-joblib.dump(char_mapping, 'shakespeare/char_mapping.sav')
+joblib.dump(char_mapping, '{}char_mapping.sav'.format(folder))
 
 # Get number of unique characters, and number of total characters
 n_chars = len(raw_text)
@@ -24,7 +26,7 @@ n_vocab = len(chars)
 # Create One Hot Encoder, and fit on char mapping
 ohe = OneHotEncoder(categorical_features=[0])
 ohe.fit(np.reshape([char_mapping[char] for char in chars], (len(chars), 1)))
-joblib.dump(ohe, 'shakespeare/ohe.sav')
+joblib.dump(ohe, '{}ohe.sav'.format(folder))
 
 # Encode raw_text into One-Hot-Encoding
 encoded_text = [char_mapping[char] for char in raw_text]
@@ -32,18 +34,20 @@ encoded_text = np.reshape(encoded_text, (len(raw_text), 1))
 encoded_text = ohe.transform(encoded_text).toarray()
 del raw_text
 
+def generator(batch_size, encoded_text, seq_length, n_vocab):
+    x_train = np.empty((batch_size, seq_length, n_vocab-1))
+    y_train = np.empty((batch_size, n_vocab))
+    
+    while True:
+        for i in range(batch_size):
+            index = np.random.randint(0, len(encoded_text)-1)
+            x_train[i] = encoded_text[index:index+seq_length,:-1]
+            y_train[i] = encoded_text[index+seq_length]
+        yield x_train, y_train
+
 # Create sequences of 100 and their corresponding output
 seq_length = 100
-x_train = []
-y_train = []
-for i in range(n_chars - seq_length):
-    sequence = encoded_text[i:i+seq_length,:-1]
-    x_train.append(sequence)
-    y_train.append(encoded_text[i+seq_length])
-
-# Create np arrays
-x_train = np.array(x_train)
-y_train = np.array(y_train)
+num_seqs = n_chars-seq_length
 
 # Assemble RNN
 from keras.models import Sequential
@@ -58,13 +62,15 @@ model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
 
 # Create checkpoints
 from keras.callbacks import ModelCheckpoint
-filepath = 'shakespeare/weights-improvement-{epoch:02d}-{loss:.4f}.h5'
+filepath = folder + 'checkpoints/weights-improvement-{epoch:02d}-{loss:.4f}.h5'
 checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, save_best_only=True, mode='min')
 callbacks_list = [checkpoint]
 
 # Fit and save RNN
-model.fit(x_train, y_train, epochs=70, batch_size=64, callbacks=callbacks_list)
-model.save('shakespeare/model.h5')
+batch = 128
+model.fit_generator(generator(batch, encoded_text, 100, n_vocab), 
+                    steps_per_epoch=num_seqs//batch, epochs=10, callbacks=callbacks_list)
+model.save('{}model.h5'.format(folder))
 
 # Import libraries
 from keras.models import load_model
@@ -76,9 +82,9 @@ from keras import backend as K
 K.set_learning_phase(0)
 
 # Load model, char mapping, encoder, and raw text from disk
-model = load_model('shakespeare/model.h5')
-char_mapping = joblib.load('shakespeare/char_mapping.sav')
-ohe = joblib.load('shakespeare/ohe.sav')
+model = load_model('{}model.h5'.format(folder))
+char_mapping = joblib.load('{}char_mapping.sav'.format(folder))
+ohe = joblib.load('{}ohe.sav'.format(folder))
 raw_text = open('shakespeare.txt').read().lower()
 n_vocab = len(char_mapping)
 
