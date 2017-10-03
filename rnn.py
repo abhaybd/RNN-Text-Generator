@@ -40,7 +40,7 @@ def generator(batch_size, encoded_text, seq_length, n_vocab):
     
     while True:
         for i in range(batch_size):
-            index = np.random.randint(0, len(encoded_text)-1)
+            index = np.random.randint(0, len(encoded_text) - seq_length - 1)
             x_train[i] = encoded_text[index:index+seq_length,:-1]
             y_train[i] = encoded_text[index+seq_length]
         yield x_train, y_train
@@ -67,19 +67,21 @@ checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, save_best_only
 callbacks_list = [checkpoint]
 
 # Fit and save RNN
-batch = 128
+batch = 64
 model.fit_generator(generator(batch, encoded_text, 100, n_vocab), 
-                    steps_per_epoch=num_seqs//batch, epochs=10, callbacks=callbacks_list)
+                    steps_per_epoch=num_seqs//batch, epochs=20, callbacks=callbacks_list)
 model.save('{}model.h5'.format(folder))
 
 # Import libraries
-from keras.models import load_model
 from sklearn.externals import joblib
 import numpy as np
+from keras.models import load_model
 from keras import backend as K
 
 # Set learning phase (disable dropout)
 K.set_learning_phase(0)
+
+folder = 'shakespeare/'
 
 # Load model, char mapping, encoder, and raw text from disk
 model = load_model('{}model.h5'.format(folder))
